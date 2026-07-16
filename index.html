@@ -30,11 +30,11 @@
 </script>
 
 <script type="text/babel">
-const { useState, useEffect, useRef, useLayoutEffect } = React;
+const { useState, useEffect, useRef, useLayoutEffect, useId } = React;
 
-function Icon({ size = 18, color = "currentColor", strokeWidth = 2, children, style = {} }) {
+function Icon({ size = 18, color = "currentColor", strokeWidth = 2, fill = "none", children, style = {} }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke={color}
       strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" style={style}>
       {children}
     </svg>
@@ -94,16 +94,19 @@ function useReveal(threshold = 0.16) {
    from the D in the wordmark. Pulses gently; the hero version
    floats and drifts with the cursor for a bit of depth.
 ============================================================ */
-function OrbMark({ size = 24, floating = false, parallax = null, dark = false }) {
-  const style = { width: size, height: size };
-  if (parallax) {
-    style.transform = `translate(${parallax.x}px, ${parallax.y}px)`;
-  }
+function OrbMark({ size = 24, floating = false, parallax = null, dark = false, style = {} }) {
+  // Parallax offset lives on an outer, non-animated wrapper; the pulse/float
+  // animation lives on the inner span. Putting both on one element meant the
+  // CSS animation silently overrode the inline parallax transform every frame.
+  const outerStyle = { display: "inline-flex", ...style };
+  if (parallax) outerStyle.transform = `translate(${parallax.x}px, ${parallax.y}px)`;
   return (
-    <span className={`orb-mark ${floating ? "orb-float" : ""} ${dark ? "orb-dark" : ""}`} style={style}>
-      <svg viewBox="0 0 24 24" width={size * 0.42} height={size * 0.42}>
-        <path d="M4 3 L20 12 L4 21 Z" fill="#fff" />
-      </svg>
+    <span style={outerStyle}>
+      <span className={`orb-mark ${floating ? "orb-float" : ""} ${dark ? "orb-dark" : ""}`} style={{ width: size, height: size }}>
+        <svg viewBox="0 0 24 24" width={size * 0.42} height={size * 0.42}>
+          <path d="M4 3 L20 12 L4 21 Z" fill="#fff" />
+        </svg>
+      </span>
     </span>
   );
 }
@@ -113,18 +116,22 @@ function OrbMark({ size = 24, floating = false, parallax = null, dark = false })
    watermark. Pure CSS + an SVG goo filter.
 ============================================================ */
 function LiquidBlobs({ variant = "" }) {
+  // Each instance needs its own filter id — three copies of the same
+  // "discipl-goo" id on one page is invalid SVG and made the browser
+  // guess which filter to use.
+  const filterId = `goo-${useId().replace(/[:]/g, "")}`;
   return (
     <div className={`liquid-blobs ${variant}`} aria-hidden="true">
       <svg width="0" height="0">
         <defs>
-          <filter id="discipl-goo">
+          <filter id={filterId}>
             <feGaussianBlur in="SourceGraphic" stdDeviation="16" result="blur" />
             <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -9" result="goo" />
             <feBlend in="SourceGraphic" in2="goo" />
           </filter>
         </defs>
       </svg>
-      <div className="blob-field">
+      <div className="blob-field" style={{ filter: `url(#${filterId})` }}>
         <span className="blob b1" />
         <span className="blob b2" />
         <span className="blob b3" />
@@ -151,7 +158,7 @@ function Reveal({ children, delay = 0, className = "", style = {}, as = "div" })
    TILT CARD — pointer-driven 3D tilt with a glare that tracks
    the cursor, the way a real glass surface catches light.
 ============================================================ */
-function TiltCard({ children, className = "", style = {}, max = 8 }) {
+function TiltCard({ children, className = "", style = {}, max = 8, lift = 0 }) {
   const ref = useRef(null);
   const [t, setT] = useState({ rx: 0, ry: 0, gx: 50, gy: 50, active: false });
 
@@ -165,13 +172,19 @@ function TiltCard({ children, className = "", style = {}, max = 8 }) {
   };
   const onLeave = () => setT({ rx: 0, ry: 0, gx: 50, gy: 50, active: false });
 
+  // Note: any hover "lift" for a tilt card has to be folded in here rather
+  // than left to a CSS :hover { transform } rule — the inline transform we
+  // set below always wins over a class-based one, which was quietly
+  // cancelling the lift on app-card/about-card hover before.
+  const translateY = t.active ? -lift : 0;
+
   return (
     <div
       ref={ref}
       className={`tilt-card ${className}`}
       style={{
         ...style,
-        transform: `perspective(1000px) rotateX(${t.rx}deg) rotateY(${t.ry}deg)`,
+        transform: `perspective(1000px) translateY(${translateY}px) rotateX(${t.rx}deg) rotateY(${t.ry}deg)`,
         transition: t.active ? "transform .08s linear" : "transform .6s cubic-bezier(.16,1,.3,1)",
       }}
       onMouseMove={onMove}
@@ -349,12 +362,15 @@ const GlobalStyles = () => (
     }
     .orb-mark.orb-dark { background: linear-gradient(135deg, var(--ink), #2c2c2c); box-shadow: 0 4px 16px rgba(0,0,0,0.35), inset 0 1px 1px rgba(255,255,255,0.25); }
     @keyframes orbPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
-    .orb-float { animation: orbPulse 2.8s ease-in-out infinite, orbFloat 6.5s ease-in-out infinite; }
-    @keyframes orbFloat { 0%,100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-16px) rotate(8deg); } }
+    .orb-float { animation: orbFloatPulse 6.5s ease-in-out infinite; }
+    @keyframes orbFloatPulse {
+      0%,100% { transform: translateY(0) scale(1) rotate(0deg); }
+      50% { transform: translateY(-16px) scale(1.1) rotate(8deg); }
+    }
 
     /* ---------- liquid blobs ---------- */
     .liquid-blobs { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
-    .blob-field { position: absolute; inset: -25%; filter: url(#discipl-goo); }
+    .blob-field { position: absolute; inset: -25%; }
     .blob { position: absolute; border-radius: 50%; opacity: 0.5; }
     .b1 { width: 320px; height: 320px; background: radial-gradient(circle at 30% 30%, var(--red), var(--red-deep)); top: -4%; left: 58%; animation: blobA 22s ease-in-out infinite; }
     .b2 { width: 260px; height: 260px; background: radial-gradient(circle at 30% 30%, #2c2c2c, var(--ink)); top: 34%; left: 74%; animation: blobB 27s ease-in-out infinite; }
@@ -369,8 +385,8 @@ const GlobalStyles = () => (
     .cursor-glow { position: absolute; inset: 0; pointer-events: none; z-index: 1; background: radial-gradient(circle 420px at var(--gx,50%) var(--gy,20%), rgba(200,35,42,0.14), transparent 60%); transition: background .1s linear; }
 
     /* ---------- reveal on scroll ---------- */
-    .reveal { opacity: 0; transform: translateY(26px) scale(0.98); filter: blur(6px); transition: opacity .8s cubic-bezier(.16,1,.3,1), transform .8s cubic-bezier(.16,1,.3,1), filter .8s ease; }
-    .reveal-in { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+    .reveal { opacity: 0; transform: translateY(26px) scale(0.98); transition: opacity .7s cubic-bezier(.16,1,.3,1), transform .7s cubic-bezier(.16,1,.3,1); }
+    .reveal-in { opacity: 1; transform: translateY(0) scale(1); }
 
     /* ---------- nav ---------- */
     .nav-wrap { position: sticky; top: 0; z-index: 50; display: flex; justify-content: center; padding: 14px 20px 0; }
@@ -388,15 +404,15 @@ const GlobalStyles = () => (
     .btn-ghost { display: inline-flex; align-items: center; gap: 6px; background: transparent; color: var(--ink); padding: 10px 18px; border-radius: 999px; font-size: 14.5px; font-weight: 600; border: 1.5px solid rgba(10,10,10,0.14); transition: border-color .2s ease, background .2s ease, transform .2s ease; }
     .btn-ghost:hover { border-color: rgba(10,10,10,0.3); background: rgba(10,10,10,0.03); transform: translateY(-1px); }
 
-    .page-enter { animation: pageIn .75s cubic-bezier(.16,1,.3,1) both; }
-    @keyframes pageIn { 0% { opacity: 0; transform: translateY(26px) scale(0.985); filter: blur(10px); } 100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); } }
+    .page-enter { animation: pageIn .6s cubic-bezier(.16,1,.3,1) both; }
+    @keyframes pageIn { 0% { opacity: 0; transform: translateY(22px) scale(0.99); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
 
     .shell { max-width: 1180px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
 
     .eyebrow { display: inline-flex; align-items: center; gap: 9px; font-size: 12.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--red); }
 
     .app-card { position: relative; border-radius: 28px; padding: 34px; background: var(--paper-soft); border: 1px solid var(--line); transition: transform .35s cubic-bezier(.16,1,.3,1), box-shadow .35s ease, border-color .35s ease; overflow: hidden; }
-    .app-card:hover { transform: translateY(-6px); box-shadow: 0 28px 60px rgba(10,10,10,0.12); border-color: rgba(200,35,42,0.28); }
+    .app-card:hover { box-shadow: 0 28px 60px rgba(10,10,10,0.12); border-color: rgba(200,35,42,0.28); }
     .app-card .tag { position: absolute; top: 28px; right: 28px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--grey); }
 
     .feature-row { display: flex; gap: 14px; padding: 16px 0; border-top: 1px solid var(--line); transition: transform .3s ease; }
@@ -430,6 +446,14 @@ const GlobalStyles = () => (
     footer.discipl-footer a { transition: color .2s ease; }
     footer.discipl-footer a:hover { color: #fff; }
 
+    .modal-overlay { position: fixed; inset: 0; background: rgba(10,10,10,0.5); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; animation: overlayIn .25s ease both; }
+    @keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
+    .modal-panel { position: relative; width: 100%; max-width: 420px; border-radius: 28px; padding: 32px; animation: modalIn .4s cubic-bezier(.16,1,.3,1) both; }
+    @keyframes modalIn { from { opacity: 0; transform: translateY(18px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    .modal-close { position: absolute; top: 16px; right: 16px; width: 32px; height: 32px; border-radius: 50%; border: none; background: rgba(10,10,10,0.06); display: flex; align-items: center; justify-content: center; z-index: 2; transition: background .2s ease; }
+    .modal-close:hover { background: rgba(10,10,10,0.12); }
+    .app-choice { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: 16px; border: 1px solid var(--line); margin-top: 12px; }
+
     @media (max-width: 860px) {
       .nav-links-desktop { display: none !important; }
       .hero-grid { grid-template-columns: 1fr !important; }
@@ -443,7 +467,7 @@ const GlobalStyles = () => (
     }
     @media (prefers-reduced-motion: reduce) {
       .page-enter, .reveal, .orb-mark, .blob, .glass-glow::before { animation: none !important; transition: none !important; }
-      .reveal { opacity: 1; transform: none; filter: none; }
+      .reveal { opacity: 1; transform: none; }
     }
   `}</style>
 );
@@ -455,7 +479,7 @@ function Logo({ height = 26 }) {
 /* ============================================================
    NAV — glass dock with a sliding "liquid" indicator
 ============================================================ */
-function Nav({ page, setPage, mobileOpen, setMobileOpen }) {
+function Nav({ page, setPage, mobileOpen, setMobileOpen, openModal }) {
   const [scrolled, setScrolled] = useState(false);
   const [hovered, setHovered] = useState(null);
   const containerRef = useRef(null);
@@ -506,9 +530,9 @@ function Nav({ page, setPage, mobileOpen, setMobileOpen }) {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative", zIndex: 1 }}>
-          <button className="btn-ghost nav-links-desktop" onClick={() => go("contact")}>Login</button>
+          <button className="btn-ghost nav-links-desktop" onClick={() => openModal("login")}>Login</button>
           <Magnetic strength={10}>
-            <button className="btn-primary" onClick={() => go("contact")}>Get Started <ArrowRight size={15} /></button>
+            <button className="btn-primary" onClick={() => openModal("get-started")}>Get Started <ArrowRight size={15} /></button>
           </Magnetic>
           <button aria-label="Toggle menu" onClick={() => setMobileOpen((v) => !v)} style={{ display: "none", background: "none", border: "none", padding: 8 }} className="mobile-toggle">
             {mobileOpen ? <X size={20} /> : <Menu size={20} />}
@@ -633,7 +657,7 @@ function Stats() {
 function AppCard({ tag, title, blurb, features, accent, delay }) {
   return (
     <Reveal delay={delay}>
-      <TiltCard className="app-card sheen" max={4}>
+      <TiltCard className="app-card sheen" max={4} lift={6}>
         <span className="tag">{tag}</span>
         <h3 className="display" style={{ fontSize: 26, fontWeight: 700, maxWidth: 300 }}>{title}</h3>
         <p style={{ color: "var(--grey)", marginTop: 10, fontSize: 15, maxWidth: 340, lineHeight: 1.55 }}>{blurb}</p>
@@ -731,6 +755,59 @@ function Purpose() {
   );
 }
 
+/* ============================================================
+   MODAL — what Login / Get Started actually open now, instead
+   of quietly redirecting to the contact form.
+============================================================ */
+function AppModal({ type, onClose, setPage }) {
+  if (!type) return null;
+  const isLogin = type === "login";
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-panel glass glass-glow" onClick={(e) => e.stopPropagation()}>
+        <button className="modal-close" onClick={onClose} aria-label="Close"><X size={16} /></button>
+        <div style={{ position: "relative", zIndex: 1 }}>
+          <OrbMark size={40} floating />
+          <h3 className="display" style={{ fontSize: 22, fontWeight: 700, marginTop: 16 }}>
+            {isLogin ? "Log in to DISCIPL" : "Get started with DISCIPL"}
+          </h3>
+          <p style={{ color: "var(--grey)", fontSize: 14.5, marginTop: 8, lineHeight: 1.55 }}>
+            {isLogin
+              ? "Accounts live inside the Mentor and Customer apps — open the app on your phone to log in."
+              : "Pick the app that fits you. Both are free to download."}
+          </p>
+
+          <div className="app-choice">
+            <div style={{ width: 40, height: 40, borderRadius: 12, background: "var(--ink)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <ClipboardList size={18} color="#fff" />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14.5 }}>Mentor App</div>
+              <div style={{ fontSize: 12.5, color: "var(--grey)" }}>For gym owners & trainers</div>
+            </div>
+          </div>
+          <div className="app-choice">
+            <div style={{ width: 40, height: 40, borderRadius: 12, background: "var(--red)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <MapPin size={18} color="#fff" />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14.5 }}>Customer App</div>
+              <div style={{ fontSize: 12.5, color: "var(--grey)" }}>For fitness lovers</div>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 22, textAlign: "center" }}>
+            <button className="btn-ghost" style={{ fontSize: 13.5 }} onClick={() => { onClose(); setPage("contact"); }}>
+              Have a question instead? Contact us
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PageHome({ setPage }) {
   return (
     <div className="page-enter">
@@ -767,7 +844,7 @@ function PageAbout({ setPage }) {
           { icon: Calendar, title: "Built for consistency", body: "Challenges, tracking, and rewards that make showing up the easy choice." },
         ].map((c, i) => (
           <Reveal key={i} delay={i * 100}>
-            <TiltCard className="glass sheen" max={5} style={{ borderRadius: 22, padding: 26 }}>
+            <TiltCard className="glass sheen" max={5} lift={4} style={{ borderRadius: 22, padding: 26 }}>
               <c.icon size={22} color="var(--red)" />
               <div style={{ fontWeight: 700, marginTop: 14, fontSize: 16 }}>{c.title}</div>
               <div style={{ fontSize: 13.5, color: "var(--grey)", marginTop: 6, lineHeight: 1.55 }}>{c.body}</div>
@@ -982,25 +1059,26 @@ function Footer({ setPage }) {
 function DisciplWebsite() {
   const [page, setPage] = useState("home");
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [modal, setModal] = useState(null); // null | "login" | "get-started"
 
   useEffect(() => {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap";
-    document.head.appendChild(link);
-    return () => document.head.removeChild(link);
-  }, []);
+    if (!modal) return;
+    const onKey = (e) => { if (e.key === "Escape") setModal(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [modal]);
 
   return (
     <div className="discipl-root">
       <GlobalStyles />
-      <Nav page={page} setPage={setPage} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
+      <Nav page={page} setPage={setPage} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} openModal={setModal} />
       {page === "home" && <PageHome setPage={setPage} />}
       {page === "about" && <PageAbout setPage={setPage} />}
       {page === "centers" && <PageCenters />}
       {page === "events" && <PageEvents />}
       {page === "contact" && <PageContact />}
       <Footer setPage={setPage} />
+      <AppModal type={modal} onClose={() => setModal(null)} setPage={setPage} />
     </div>
   );
 }
